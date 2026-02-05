@@ -62,6 +62,15 @@ client = genai.Client(api_key=API_KEY)
 MODELO = "gemini-2.0-flash"
 
 # ==========================================
+# LÓGICA DE RESET
+# ==========================================
+if "reset_key" not in st.session_state:
+    st.session_state.reset_key = 0
+
+def reset_app():
+    st.session_state.reset_key += 1
+    st.rerun()
+# ==========================================
 # FUNCIONES DE PROCESAMIENTO
 # ==========================================
 
@@ -275,6 +284,7 @@ st.markdown("### 📁 Paso 1: Subir Template Horizon")
 template_file = st.file_uploader(
     "Selecciona el archivo .pptx del template",
     type=['pptx'],
+    key=f"template_{st.session_state.reset_key}",
     help="Debe contener los placeholders: {{PERFIL_COMPLETO}}, {{EXPERIENCIA_1_2}}, {{EXPERIENCIA_3_PLUS}}"
 )
 
@@ -288,14 +298,17 @@ st.markdown("### 📄 Paso 2: Subir CV del Candidato")
 cv_file = st.file_uploader(
     "Selecciona el archivo .pdf del CV",
     type=['pdf'],
+    key=f"cv_{st.session_state.reset_key}",
     help="El CV debe estar en formato PDF"
 )
 
 if cv_file:
     st.success(f"✓ CV cargado: {cv_file.name}")
 
-st.markdown("---")
+# Botón de Limpiar (opcional, arriba del de procesar)
+st.button("🧹 Limpiar campos y reiniciar", on_click=reset_app)
 
+st.markdown("---")
 # Botón de procesamiento
 if template_file and cv_file:
     if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
