@@ -54,26 +54,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CONFIGURACIÓN DE GEMINI
-# ==========================================
-# Puedes cambiar esto por st.secrets["GEMINI_API_KEY"] para mayor seguridad
-API_KEY = st.secrets["GEMINI_API_KEY"]
-client = genai.Client(api_key=API_KEY)
-MODELO = "gemini-2.0-flash"
-
-# ==========================================
-# LÓGICA DE RESET
+# LÓGICA DE RESET (session_state)
 # ==========================================
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
 
 def reset_app():
+    """Incrementa la llave usada por los file_uploaders para 'limpiar' los campos."""
     st.session_state.reset_key += 1
-    st.rerun()
+    # No es necesario llamar a st.rerun(); Streamlit reruneará la app tras la interacción del botón.
+
+# ==========================================
+# CONFIGURACIÓN DE GEMINI
+# ==========================================
+API_KEY = st.secrets["GEMINI_API_KEY"]
+client = genai.Client(api_key=API_KEY)
+MODELO = "gemini-2.0-flash"
+
 # ==========================================
 # FUNCIONES DE PROCESAMIENTO
 # ==========================================
-
 def extraer_foto_y_texto(pdf_bytes):
     """Extrae texto y foto del PDF"""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -279,8 +279,16 @@ with st.expander("ℹ️ Instrucciones de uso"):
 
 st.markdown("---")
 
-# Upload Template
-st.markdown("### 📁 Paso 1: Subir Template Horizon")
+# ----------------------
+# PASO 1 (con botón Limpiar al lado)
+# ----------------------
+col_main, col_btn = st.columns([8,1])
+with col_main:
+    st.markdown("### 📁 Paso 1: Subir Template Horizon")
+with col_btn:
+    # Botón pequeño, a la derecha del título
+    st.button("🧹", on_click=reset_app, key="btn_limpiar", help="Limpiar archivos subidos")
+
 template_file = st.file_uploader(
     "Selecciona el archivo .pptx del template",
     type=['pptx'],
@@ -293,7 +301,7 @@ if template_file:
 
 st.markdown("---")
 
-# Upload CV
+# PASO 2
 st.markdown("### 📄 Paso 2: Subir CV del Candidato")
 cv_file = st.file_uploader(
     "Selecciona el archivo .pdf del CV",
@@ -305,10 +313,8 @@ cv_file = st.file_uploader(
 if cv_file:
     st.success(f"✓ CV cargado: {cv_file.name}")
 
-# Botón de Limpiar (opcional, arriba del de procesar)
-st.button("🧹 Limpiar campos y reiniciar", on_click=reset_app)
-
 st.markdown("---")
+
 # Botón de procesamiento
 if template_file and cv_file:
     if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
@@ -357,6 +363,6 @@ else:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 1rem;'>
-    <p>Desarrollado para Horizon Consulting | Powered by Gemini 2.0 Flash</p>
+    <p>Desarrollado por Horizon Consulting | Powered by Gemini 2.0 Flash</p>
 </div>
 """, unsafe_allow_html=True)
