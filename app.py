@@ -57,7 +57,7 @@ st.markdown("""
 # CONFIGURACIÓN DE GEMINI
 # ==========================================
 # Puedes cambiar esto por st.secrets["GEMINI_API_KEY"] para mayor seguridad
-API_KEY = "AIzaSyBTQkpaYzAyKf4wxXSdW7iBtiTIKgd6Cp0"
+API_KEY = "API_KEY = st.secrets["GEMINI_API_KEY"]"
 client = genai.Client(api_key=API_KEY)
 MODELO = "gemini-2.0-flash"
 
