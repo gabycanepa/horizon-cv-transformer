@@ -142,13 +142,83 @@ def ajustar_fuente(shape, size=9):
                 run.font.size = Pt(size)
 
 def reemplazar_placeholder(slide, placeholder, nuevo_texto, font_size=9):
-    """Reemplaza un placeholder en el slide"""
+    """Reemplaza un placeholder en el slide (método simple, preservado por compatibilidad)"""
     for shape in slide.shapes:
         if hasattr(shape, "text_frame"):
             if placeholder in shape.text:
                 shape.text = nuevo_texto
                 ajustar_fuente(shape, font_size)
                 return True
+    return False
+
+# -----------------------
+# Nueva función: formatea por líneas y marca títulos en negrita
+# -----------------------
+def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_size=Pt(8)):
+    """
+    Busca el placeholder en los shapes del slide y reemplaza su contenido
+    por párrafos formateados. Se consideran títulos (negrita):
+      - líneas que terminan en ':'
+      - líneas totalmente en MAYÚSCULAS (mínimo 3 chars)
+      - líneas que empiezan con un bullet '•' o con '-'
+    """
+    import re
+
+    for shape in slide.shapes:
+        if not hasattr(shape, "text_frame"):
+            continue
+        # Proteger acceso a shape.text
+        try:
+            has_placeholder = placeholder in shape.text
+        except Exception:
+            has_placeholder = False
+        if not has_placeholder:
+            continue
+
+        tf = shape.text_frame
+        # Reiniciar contenido
+        tf.text = ""
+
+        # Dividir texto en líneas no vacías manteniendo el orden
+        lines = [ln.rstrip() for ln in texto.splitlines() if ln.strip() != ""]
+
+        for i, line in enumerate(lines):
+            if i == 0:
+                p = tf.paragraphs[0]
+                p.text = line
+            else:
+                p = tf.add_paragraph()
+                p.text = line
+
+            # Detección mejorada de título
+            is_title = False
+            stripped = line.strip()
+
+            # reglas:
+            if stripped.endswith(':'):
+                is_title = True
+            elif stripped.isupper() and len(stripped) > 2:
+                is_title = True
+            elif stripped.startswith('•') or stripped.startswith('-'):
+                # líneas que inician con bullet suelen ser encabezados de experiencia
+                is_title = True
+            else:
+                # opcional: detectar formato "Empresa | Puesto (2019-2022)"
+                # si querés habilitar, descomenta la siguiente línea:
+                # if re.search(r"\|\s*.+\(\d{4}(?:-\d{4})?\)", stripped):
+                #     is_title = True
+                pass
+
+            # Asegurar que existan runs
+            if not p.runs:
+                r = p.add_run()
+                r.text = p.text
+
+            for run in p.runs:
+                run.font.bold = is_title
+                run.font.size = title_size if is_title else body_size
+
+        return True
     return False
 
 def eliminar_cuadro_foto(slide):
@@ -210,7 +280,8 @@ def generar_pptx(datos, template_bytes, foto_bytes):
     perfil_completo += f"EXPERTISE:\n{datos.get('expertise', '')}\n\n"
     perfil_completo += f"IDIOMAS:\n{datos.get('idiomas', '')}"
     
-    reemplazar_placeholder(s1, "{{PERFIL_COMPLETO}}", perfil_completo, 8)
+    # Usar la función que aplica negrita a títulos
+    llenar_shape_con_titulos(s1, "{{PERFIL_COMPLETO}}", perfil_completo, title_size=Pt(10), body_size=Pt(8))
     agregar_foto(s1, foto_bytes)
 
     # EXPERIENCIAS
@@ -228,7 +299,7 @@ def generar_pptx(datos, template_bytes, foto_bytes):
             txt_exp_1_2 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n"
             txt_exp_1_2 += f"  {exp['descripcion']}\n\n"
         
-        reemplazar_placeholder(s2, "{{EXPERIENCIA_1_2}}", txt_exp_1_2, 9)
+        llenar_shape_con_titulos(s2, "{{EXPERIENCIA_1_2}}", txt_exp_1_2, title_size=Pt(10), body_size=Pt(9))
         agregar_foto(s2, foto_bytes)
 
     # SLIDE 3: EXPERIENCIA 3+
@@ -241,7 +312,7 @@ def generar_pptx(datos, template_bytes, foto_bytes):
             txt_exp_3_plus += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n"
             txt_exp_3_plus += f"  {exp['descripcion']}\n\n"
         
-        reemplazar_placeholder(s3, "{{EXPERIENCIA_3_PLUS}}", txt_exp_3_plus, 7)
+        llenar_shape_con_titulos(s3, "{{EXPERIENCIA_3_PLUS}}", txt_exp_3_plus, title_size=Pt(10), body_size=Pt(8))
         agregar_foto(s3, foto_bytes)
 
     # Guardar en BytesIO
