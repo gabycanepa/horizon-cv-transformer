@@ -61,7 +61,6 @@ if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
 
 def reset_app():
-    """Limpia los campos de subida."""
     st.session_state.reset_key += 1
 
 # ==========================================
@@ -75,11 +74,9 @@ MODELO = "gemini-2.0-flash"
 # FUNCIONES DE PROCESAMIENTO
 # ==========================================
 def extraer_foto_y_texto(pdf_bytes):
-    """Extrae texto y foto del PDF"""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     texto_completo = ""
     foto_bytes = None
-    
     for page in doc:
         texto_completo += page.get_text()
         if not foto_bytes:
@@ -88,93 +85,50 @@ def extraer_foto_y_texto(pdf_bytes):
                 xref = images[0][0]
                 base_image = doc.extract_image(xref)
                 foto_bytes = base_image["image"]
-    
     doc.close()
     return texto_completo, foto_bytes
 
 def redactar_con_gemini(texto_cv):
-    """Procesa el CV con Gemini y devuelve JSON estructurado"""
     prompt = f"""
     Eres un transcriptor de datos de alta fidelidad para Horizon Consulting. 
     Tu única misión es NO PERDER NINGUNA EXPERIENCIA LABORAL.
-
-    PASO 1: Identifica TODAS las empresas y periodos mencionados en el CV.
-    PASO 2: Para CADA UNA de esas empresas, extrae el puesto y la descripción completa.
-    
-    REGLAS DE ORO:
-    - Si el CV tiene 6 experiencias, el JSON DEBE tener 6 experiencias.
-    - NO resumas. NO omitas las antiguas. NO combines puestos.
-    - Traduce al español manteniendo el rigor técnico.
-
     ESTRUCTURA JSON:
     {{ 
-      "nombre": "", 
-      "rol": "", 
+      "nombre": "", "rol": "", 
       "contacto": {{ "telefono": "", "email": "", "ubicacion": "", "linkedin": "" }},
       "perfil": "", 
-      "experiencias": [
-        {{ "empresa": "", "puesto": "", "periodo": "", "descripcion": "" }}
-      ], 
-      "educacion": "", 
-      "habilidades_tecnicas": "", 
-      "herramientas": "",
-      "expertise": "", 
-      "certificaciones": "", 
-      "idiomas": "" 
+      "experiencias": [{{ "empresa": "", "puesto": "", "periodo": "", "descripcion": "" }}], 
+      "educacion": "", "habilidades_tecnicas": "", "herramientas": "",
+      "expertise": "", "certificaciones": "", "idiomas": "" 
     }}
-
     CV A PROCESAR:
     {texto_cv}
     """
-    
-    response = client.models.generate_content(
-        model=MODELO, 
-        contents=prompt, 
-        config={'response_mime_type': 'application/json'}
-    )
+    response = client.models.generate_content(model=MODELO, contents=prompt, config={'response_mime_type': 'application/json'})
     return json.loads(response.text)
 
 def ajustar_fuente(shape, size=9):
-    """Ajusta el tamaño de fuente de un shape"""
     if hasattr(shape, "text_frame"):
         for p in shape.text_frame.paragraphs:
-            for run in p.runs: 
-                run.font.size = Pt(size)
+            for run in p.runs: run.font.size = Pt(size)
 
 def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_size=Pt(8)):
-    """
-    Reemplaza placeholder y aplica negrita a:
-    - Líneas que terminan en ':'
-    - Líneas en MAYÚSCULAS
-    - Líneas que empiezan con '•' o '-' (Experiencias)
-    """
     for shape in slide.shapes:
-        if not hasattr(shape, "text_frame"):
-            continue
+        if not hasattr(shape, "text_frame"): continue
         try:
-            if placeholder not in shape.text:
-                continue
-        except:
-            continue
-
+            if placeholder not in shape.text: continue
+        except: continue
         tf = shape.text_frame
-        tf.text = "" # Limpiar
-
+        tf.text = ""
         lines = [ln.rstrip() for ln in texto.splitlines() if ln.strip() != ""]
-
         for i, line in enumerate(lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = line
-
-            # Lógica de Negrita
             is_title = False
             stripped = line.strip()
             if stripped.endswith(':') or (stripped.isupper() and len(stripped) > 2) or stripped.startswith('•') or stripped.startswith('-'):
                 is_title = True
-
-            if not p.runs:
-                p.add_run()
-            
+            if not p.runs: p.add_run()
             for run in p.runs:
                 run.font.bold = is_title
                 run.font.size = title_size if is_title else body_size
@@ -182,17 +136,12 @@ def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_
     return False
 
 def eliminar_cuadro_foto(slide):
-    """Elimina el cuadro placeholder de FOTO"""
-    shapes_to_delete = []
-    for shape in slide.shapes:
-        if hasattr(shape, "text") and "FOTO" in shape.text:
-            shapes_to_delete.append(shape)
+    shapes_to_delete = [s for s in slide.shapes if hasattr(s, "text") and "FOTO" in s.text]
     for shape in shapes_to_delete:
         sp = shape.element
         sp.getparent().remove(sp)
 
 def agregar_foto(slide, foto_bytes):
-    """Agrega la foto del candidato al slide"""
     if foto_bytes:
         eliminar_cuadro_foto(slide)
         with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
@@ -202,7 +151,6 @@ def agregar_foto(slide, foto_bytes):
         os.unlink(tmp_path)
 
 def actualizar_encabezado(slide, nombre, rol):
-    """Actualiza el encabezado del slide"""
     for shape in slide.shapes:
         if hasattr(shape, "text"):
             if any(x in shape.text for x in ["Colaborador propuesto", "Edwin", "Nombre"]):
@@ -211,78 +159,59 @@ def actualizar_encabezado(slide, nombre, rol):
                 return
 
 def generar_pptx(datos, template_bytes, foto_bytes):
-    """Genera el PPTX final"""
     prs = Presentation(BytesIO(template_bytes))
-    nombre = datos.get('nombre', 'N/A')
-    rol = datos.get('rol', '')
-    
-    # SLIDE 1: PERFIL
+    nombre, rol = datos.get('nombre', 'N/A'), datos.get('rol', '')
     s1 = prs.slides[0]
     actualizar_encabezado(s1, nombre, rol)
-    
     c = datos.get('contacto', {})
-    perfil_txt = f"PERFIL PROFESIONAL:\n{datos.get('perfil', '')}\n\n"
-    perfil_txt += f"CONTACTO:\n"
+    perfil_txt = f"PERFIL PROFESIONAL:\n{datos.get('perfil', '')}\n\nCONTACTO:\n"
     if c.get('email'): perfil_txt += f"• Email: {c['email']}\n"
     if c.get('telefono'): perfil_txt += f"• Teléfono: {c['telefono']}\n"
-    if c.get('linkedin'): perfil_txt += f"• LinkedIn: {c['linkedin']}\n"
-    perfil_txt += f"\nEDUCACIÓN:\n{datos.get('educacion', '')}\n\n"
-    perfil_txt += f"HABILIDADES TÉCNICAS:\n{datos.get('habilidades_tecnicas', '')}\n\n"
-    perfil_txt += f"HERRAMIENTAS:\n{datos.get('herramientas', '')}\n\n"
-    perfil_txt += f"IDIOMAS:\n{datos.get('idiomas', '')}"
-    
+    perfil_txt += f"\nEDUCACIÓN:\n{datos.get('educacion', '')}\n\nHABILIDADES TÉCNICAS:\n{datos.get('habilidades_tecnicas', '')}\n\nIDIOMAS:\n{datos.get('idiomas', '')}"
     llenar_shape_con_titulos(s1, "{{PERFIL_COMPLETO}}", perfil_txt, Pt(10), Pt(8))
     agregar_foto(s1, foto_bytes)
-
-    # EXPERIENCIAS
-    experiencias = datos.get('experiencias', [])
-    
-    # SLIDE 2
+    exps = datos.get('experiencias', [])
     if len(prs.slides) > 1:
         s2 = prs.slides[1]
         actualizar_encabezado(s2, nombre, rol)
         txt2 = "EXPERIENCIA LABORAL:\n\n"
-        for exp in experiencias[:2]:
-            txt2 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n  {exp['descripcion']}\n\n"
+        for exp in exps[:2]: txt2 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n  {exp['descripcion']}\n\n"
         llenar_shape_con_titulos(s2, "{{EXPERIENCIA_1_2}}", txt2, Pt(10), Pt(9))
         agregar_foto(s2, foto_bytes)
-
-    # SLIDE 3
-    if len(experiencias) > 2 and len(prs.slides) > 2:
+    if len(exps) > 2 and len(prs.slides) > 2:
         s3 = prs.slides[2]
         actualizar_encabezado(s3, nombre, rol)
         txt3 = "EXPERIENCIA LABORAL (Cont.):\n\n"
-        for exp in experiencias[2:]:
-            txt3 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n  {exp['descripcion']}\n\n"
+        for exp in exps[2:]: txt3 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n  {exp['descripcion']}\n\n"
         llenar_shape_con_titulos(s3, "{{EXPERIENCIA_3_PLUS}}", txt3, Pt(10), Pt(8))
         agregar_foto(s3, foto_bytes)
-
-    output = BytesIO()
-    prs.save(output)
-    output.seek(0)
-    return output, nombre, len(experiencias)
+    out = BytesIO(); prs.save(out); out.seek(0)
+    return out, nombre, len(exps)
 
 # ==========================================
-# INTERFAZ
+# INTERFAZ DE STREAMLIT
 # ==========================================
-st.markdown('<div class="main-header"><h1>🎨 TRANSFORMADOR HORIZON CV</h1><p>Formato automático con IA</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1>🎨 TRANSFORMADOR HORIZON CV</h1><p>Convierte CVs al formato Horizon automáticamente</p></div>', unsafe_allow_html=True)
 
-# PASO 1: Template Precargado
+with st.expander("ℹ️ Instrucciones de uso"):
+    st.markdown("1. Sube el CV del candidato (.pdf)\n2. Haz clic en 'Transformar'\n3. Descarga el resultado.")
+
+st.markdown("---")
+
+# PASO 1: Template (Precargado)
 col_main, col_btn = st.columns([8,1])
 with col_main: st.markdown("### 📁 Paso 1: Template Horizon")
 with col_btn: st.button("🧹", on_click=reset_app, key="btn_limpiar")
 
 DEFAULT_TEMPLATE = "Modelo de CV Horizon.pptx"
 template_bytes = None
-
-template_file = st.file_uploader("Sube un nuevo .pptx para cambiar el modelo", type=['pptx'], key=f"t_{st.session_state.reset_key}")
+template_file = st.file_uploader("Sube un nuevo .pptx si quieres cambiar el modelo", type=['pptx'], key=f"t_{st.session_state.reset_key}")
 
 if template_file:
     template_bytes = template_file.read()
-    st.success(f"✓ Usando: {template_file.name}")
+    st.success(f"✓ Usando template subido: {template_file.name}")
 elif os.path.exists(DEFAULT_TEMPLATE):
-    with open(DEFAULT_TEMPLATE, "rb") as f:
-        template_bytes = f.read()
+    with open(DEFAULT_TEMPLATE, "rb") as f: template_bytes = f.read()
     st.info(f"ℹ️ Usando modelo estándar: {DEFAULT_TEMPLATE}")
 else:
     st.warning("⚠️ Sube un template .pptx para comenzar.")
@@ -290,20 +219,48 @@ else:
 st.markdown("---")
 
 # PASO 2: CV
-st.markdown("### 📄 Paso 2: CV del Candidato")
-cv_file = st.file_uploader("Selecciona el CV (.pdf)", type=['pdf'], key=f"cv_{st.session_state.reset_key}")
+st.markdown("### 📄 Paso 2: Subir CV del Candidato")
+cv_file = st.file_uploader("Selecciona el archivo .pdf del CV", type=['pdf'], key=f"cv_{st.session_state.reset_key}")
 
 if cv_file:
     st.success(f"✓ CV cargado: {cv_file.name}")
-    if template_bytes:
-        if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
-            with st.spinner("Procesando..."):
-                try:
-                    texto, foto = extraer_foto_y_texto(cv_file.read())
-                    datos = redactar_con_gemini(texto)
-                    out, nom, n_exp = generar_pptx(datos, template_bytes, foto)
-                    
-                    st.markdown(f'<div class="success-box">✅ <b>{nom}</b> transformado ({n_exp} exp.)</div>', unsafe_allow_html=True)
-                    st.download_button("📥 DESCARGAR CV", out, f"CV_Horizon_{nom}.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+
+st.markdown("---")
+
+# BOTÓN DE PROCESAMIENTO (Versión Completa)
+if template_bytes and cv_file:
+    if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
+        with st.spinner("⏳ Procesando..."):
+            try:
+                cv_bytes = cv_file.read()
+                st.info("✓ Extrayendo información del PDF...")
+                texto, foto_bytes = extraer_foto_y_texto(cv_bytes)
+                
+                st.info("✓ Analizando con Gemini...")
+                datos_json = redactar_con_gemini(texto)
+                
+                st.info("✓ Generando presentación Horizon...")
+                output_pptx, nombre, num_exp = generar_pptx(datos_json, template_bytes, foto_bytes)
+                
+                st.markdown(f"""
+                <div class="success-box">
+                    <h3 style='color: #155724; margin: 0;'>✅ ¡TRANSFORMACIÓN COMPLETADA!</h3>
+                    <p style='margin: 10px 0;'><strong>Candidato:</strong> {nombre}</p>
+                    <p style='margin: 10px 0;'><strong>Experiencias detectadas:</strong> {num_exp}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.download_button(
+                    label="📥 DESCARGAR CV HORIZON",
+                    data=output_pptx,
+                    file_name=f"CV_Horizon_{nombre.replace(' ', '_')}.pptx",
+                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                )
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+                st.exception(e)
+else:
+    st.info("👆 Por favor sube el CV para continuar")
+
+st.markdown("---")
+st.markdown('<div style="text-align: center; color: #666; padding: 1rem;"><p>Desarrollado por Horizon Consulting | Powered by Gemini 2.0 Flash</p></div>', unsafe_allow_html=True)
