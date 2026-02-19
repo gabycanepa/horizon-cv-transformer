@@ -6,6 +6,7 @@ import fitz  # PyMuPDF
 from google import genai
 from pptx import Presentation
 from pptx.util import Pt, Inches
+from pptx.dml.color import RGBColor
 import tempfile
 from io import BytesIO
 
@@ -55,7 +56,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# LÓGICA DE RESET (session_state)
+# LÓGICA DE RESET
 # ==========================================
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
@@ -110,28 +111,43 @@ def redactar_con_gemini(texto_cv):
 def ajustar_fuente(shape, size=9):
     if hasattr(shape, "text_frame"):
         for p in shape.text_frame.paragraphs:
-            for run in p.runs: run.font.size = Pt(size)
+            for run in p.runs:
+                run.font.size = Pt(size)
 
-def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_size=Pt(8)):
+def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_size=Pt(8), font_color=(0, 0, 0)):
     for shape in slide.shapes:
-        if not hasattr(shape, "text_frame"): continue
+        if not hasattr(shape, "text_frame"):
+            continue
         try:
-            if placeholder not in shape.text: continue
-        except: continue
+            if placeholder not in shape.text:
+                continue
+        except:
+            continue
+
         tf = shape.text_frame
         tf.text = ""
+
         lines = [ln.rstrip() for ln in texto.splitlines() if ln.strip() != ""]
+
         for i, line in enumerate(lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = line
-            is_title = False
+
             stripped = line.strip()
-            if stripped.endswith(':') or (stripped.isupper() and len(stripped) > 2) or stripped.startswith('•') or stripped.startswith('-'):
-                is_title = True
-            if not p.runs: p.add_run()
+            is_title = (
+                stripped.endswith(':') or
+                (stripped.isupper() and len(stripped) > 2) or
+                stripped.startswith('•')
+            )
+
+            if not p.runs:
+                p.add_run()
+
             for run in p.runs:
                 run.font.bold = is_title
                 run.font.size = title_size if is_title else body_size
+                run.font.color.rgb = RGBColor(*font_color)
+
         return True
     return False
 
@@ -147,45 +163,99 @@ def agregar_foto(slide, foto_bytes):
         with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
             tmp.write(foto_bytes)
             tmp_path = tmp.name
-        slide.shapes.add_picture(tmp_path, Inches(8.5), Inches(0.5), width=Inches(1.2))
+        slide.shapes.add_picture(tmp_path, Inches(0.2), Inches(0.3), width=Inches(1.5))
         os.unlink(tmp_path)
 
 def actualizar_encabezado(slide, nombre, rol):
     for shape in slide.shapes:
         if hasattr(shape, "text"):
-            if any(x in shape.text for x in ["Colaborador propuesto", "Edwin", "Nombre"]):
-                shape.text = f"Colaborador propuesto – {nombre}\n{rol}"
-                ajustar_fuente(shape, 11)
+            if any(x in shape.text for x in ["{{NOMBRE}}", "Colaborador propuesto", "NOMBRE"]):
+                tf = shape.text_frame
+                tf.text = ""
+                p1 = tf.paragraphs[0]
+                p1.text = f"COLABORADOR PROPUESTO – {nombre}"
+                if not p1.runs: p1.add_run()
+                for run in p1.runs:
+                    run.font.bold = True
+                    run.font.size = Pt(13)
+                    run.font.color.rgb = RGBColor(88, 24, 139)  # Violeta oscuro
+
+                p2 = tf.add_paragraph()
+                p2.text = rol
+                if not p2.runs: p2.add_run()
+                for run in p2.runs:
+                    run.font.bold = False
+                    run.font.size = Pt(11)
+                    run.font.color.rgb = RGBColor(88, 24, 139)
                 return
 
 def generar_pptx(datos, template_bytes, foto_bytes):
     prs = Presentation(BytesIO(template_bytes))
-    nombre, rol = datos.get('nombre', 'N/A'), datos.get('rol', '')
+    nombre = datos.get('nombre', 'N/A')
+    rol = datos.get('rol', '')
+    exps = datos.get('experiencias', [])
+
+    # ========================
+    # SLIDE 1
+    # ========================
     s1 = prs.slides[0]
     actualizar_encabezado(s1, nombre, rol)
-    c = datos.get('contacto', {})
-    perfil_txt = f"PERFIL PROFESIONAL:\n{datos.get('perfil', '')}\n\nCONTACTO:\n"
-    if c.get('email'): perfil_txt += f"• Email: {c['email']}\n"
-    if c.get('telefono'): perfil_txt += f"• Teléfono: {c['telefono']}\n"
-    perfil_txt += f"\nEDUCACIÓN:\n{datos.get('educacion', '')}\n\nHABILIDADES TÉCNICAS:\n{datos.get('habilidades_tecnicas', '')}\n\nIDIOMAS:\n{datos.get('idiomas', '')}"
-    llenar_shape_con_titulos(s1, "{{PERFIL_COMPLETO}}", perfil_txt, Pt(10), Pt(8))
+
+    # LADO IZQUIERDO (VIOLETA → TEXTO BLANCO)
+    llenar_shape_con_titulos(s1, "{{PERFIL}}",
+        f"PERFIL:\n{datos.get('perfil', '')}",
+        Pt(10), Pt(8), font_color=(255, 255, 255))
+
+    habilidades_txt = f"HABILIDADES:\n{datos.get('habilidades_tecnicas', '')}"
+    if datos.get('herramientas'): habilidades_txt += f"\n\nHERRAMIENTAS:\n{datos.get('herramientas', '')}"
+    if datos.get('expertise'): habilidades_txt += f"\n\nEXPERTISE:\n{datos.get('expertise', '')}"
+    llenar_shape_con_titulos(s1, "{{HABILIDADES}}",
+        habilidades_txt,
+        Pt(10), Pt(8), font_color=(255, 255, 255))
+
+    educacion_txt = f"EDUCACIÓN:\n{datos.get('educacion', '')}"
+    if datos.get('certificaciones'): educacion_txt += f"\n\nCERTIFICACIONES:\n{datos.get('certificaciones', '')}"
+    llenar_shape_con_titulos(s1, "{{EDUCACION}}",
+        educacion_txt,
+        Pt(10), Pt(8), font_color=(255, 255, 255))
+
+    llenar_shape_con_titulos(s1, "{{IDIOMAS}}",
+        f"IDIOMAS:\n{datos.get('idiomas', '')}",
+        Pt(10), Pt(8), font_color=(255, 255, 255))
+
+    # LADO DERECHO (BLANCO → TEXTO NEGRO)
+    txt_exp12 = "EXPERIENCIA LABORAL:\n\n"
+    for exp in exps[:2]:
+        txt_exp12 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n{exp['descripcion']}\n\n"
+    llenar_shape_con_titulos(s1, "{{EXPERIENCIA_1_2}}",
+        txt_exp12,
+        Pt(10), Pt(8), font_color=(0, 0, 0))
+
     agregar_foto(s1, foto_bytes)
-    exps = datos.get('experiencias', [])
-    if len(prs.slides) > 1:
-        s2 = prs.slides[1]
-        actualizar_encabezado(s2, nombre, rol)
-        txt2 = "EXPERIENCIA LABORAL:\n\n"
-        for exp in exps[:2]: txt2 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n  {exp['descripcion']}\n\n"
-        llenar_shape_con_titulos(s2, "{{EXPERIENCIA_1_2}}", txt2, Pt(10), Pt(9))
-        agregar_foto(s2, foto_bytes)
-    if len(exps) > 2 and len(prs.slides) > 2:
-        s3 = prs.slides[2]
-        actualizar_encabezado(s3, nombre, rol)
-        txt3 = "EXPERIENCIA LABORAL (Cont.):\n\n"
-        for exp in exps[2:]: txt3 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n  {exp['descripcion']}\n\n"
-        llenar_shape_con_titulos(s3, "{{EXPERIENCIA_3_PLUS}}", txt3, Pt(10), Pt(8))
-        agregar_foto(s3, foto_bytes)
-    out = BytesIO(); prs.save(out); out.seek(0)
+
+    # ========================
+    # SLIDES 2 Y 3
+    # ========================
+    remaining_exps = exps[2:]
+
+    for i in range(1, len(prs.slides)):
+        slide = prs.slides[i]
+        actualizar_encabezado(slide, nombre, rol)
+
+        txt = "EXPERIENCIA LABORAL (Cont.):\n\n"
+        for exp in remaining_exps[:4]:
+            txt += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n{exp['descripcion']}\n\n"
+
+        llenar_shape_con_titulos(slide, "{{EXPERIENCIA_3_PLUS}}",
+            txt,
+            Pt(10), Pt(8), font_color=(0, 0, 0))
+
+        agregar_foto(slide, foto_bytes)
+        remaining_exps = remaining_exps[4:]
+
+    out = BytesIO()
+    prs.save(out)
+    out.seek(0)
     return out, nombre, len(exps)
 
 # ==========================================
@@ -198,12 +268,12 @@ with st.expander("ℹ️ Instrucciones de uso"):
 
 st.markdown("---")
 
-# PASO 1: Template (Precargado)
-col_main, col_btn = st.columns([8,1])
+# PASO 1: Template
+col_main, col_btn = st.columns([8, 1])
 with col_main: st.markdown("### 📁 Paso 1: Template Horizon")
 with col_btn: st.button("🧹", on_click=reset_app, key="btn_limpiar")
 
-DEFAULT_TEMPLATE = "Modelo de CV Horizon.pptx"
+DEFAULT_TEMPLATE = "CV HORIZON-MODELO 2.pptx"
 template_bytes = None
 template_file = st.file_uploader("Sube un nuevo .pptx si quieres cambiar el modelo", type=['pptx'], key=f"t_{st.session_state.reset_key}")
 
@@ -227,21 +297,22 @@ if cv_file:
 
 st.markdown("---")
 
-# BOTÓN DE PROCESAMIENTO (Versión Completa)
+# BOTÓN DE PROCESAMIENTO
 if template_bytes and cv_file:
     if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
         with st.spinner("⏳ Procesando..."):
             try:
                 cv_bytes = cv_file.read()
+
                 st.info("✓ Extrayendo información del PDF...")
                 texto, foto_bytes = extraer_foto_y_texto(cv_bytes)
-                
+
                 st.info("✓ Analizando con Gemini...")
                 datos_json = redactar_con_gemini(texto)
-                
+
                 st.info("✓ Generando presentación Horizon...")
                 output_pptx, nombre, num_exp = generar_pptx(datos_json, template_bytes, foto_bytes)
-                
+
                 st.markdown(f"""
                 <div class="success-box">
                     <h3 style='color: #155724; margin: 0;'>✅ ¡TRANSFORMACIÓN COMPLETADA!</h3>
@@ -249,18 +320,23 @@ if template_bytes and cv_file:
                     <p style='margin: 10px 0;'><strong>Experiencias detectadas:</strong> {num_exp}</p>
                 </div>
                 """, unsafe_allow_html=True)
-                
+
                 st.download_button(
                     label="📥 DESCARGAR CV HORIZON",
                     data=output_pptx,
                     file_name=f"CV_Horizon_{nombre.replace(' ', '_')}.pptx",
                     mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                 )
+
             except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                st.error(f"❌ Error durante el procesamiento: {str(e)}")
                 st.exception(e)
 else:
     st.info("👆 Por favor sube el CV para continuar")
 
 st.markdown("---")
-st.markdown('<div style="text-align: center; color: #666; padding: 1rem;"><p>Desarrollado por Horizon Consulting | Powered by Gemini 2.0 Flash</p></div>', unsafe_allow_html=True)
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 1rem;'>
+    <p>Desarrollado por Horizon Consulting | Powered by Gemini 2.0 Flash</p>
+</div>
+""", unsafe_allow_html=True)
