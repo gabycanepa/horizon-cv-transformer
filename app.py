@@ -1,3 +1,5 @@
+sobre este codigo el cambio
+
 import streamlit as st
 import os
 import json
@@ -73,14 +75,34 @@ def extraer_foto_y_texto(pdf_bytes):
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     texto_completo = ""
     foto_bytes = None
+
+    # 1. Extraer texto completo
     for page in doc:
         texto_completo += page.get_text()
-        if not foto_bytes:
-            images = page.get_images(full=True)
-            if images:
-                xref = images[0][0]
-                base_image = doc.extract_image(xref)
+
+    # 2. Intentar extraer imagen incrustada (método directo)
+    for page in doc:
+        images = page.get_images(full=True)
+        if images:
+            # Buscar la imagen más grande (más probable que sea la foto, no un ícono)
+            mejor = max(images, key=lambda img: doc.extract_image(img[0])["width"] * doc.extract_image(img[0])["height"])
+            base_image = doc.extract_image(mejor[0])
+            # Solo usar si tiene tamaño razonable (más de 50x50 px)
+            if base_image["width"] > 50 and base_image["height"] > 50:
                 foto_bytes = base_image["image"]
+                break
+
+    # 3. FALLBACK: Si no hay imagen incrustada (CVs de Canva, Word plano, etc.)
+    # Renderizar la esquina superior de la primera página como imagen
+    if not foto_bytes:
+        page = doc[0]
+        page_rect = page.rect
+        # Área superior izquierda: aprox 20% del ancho y 30% del alto
+        clip = fitz.Rect(0, 0, page_rect.width * 0.22, page_rect.height * 0.30)
+        mat = fitz.Matrix(3, 3)  # Zoom 3x para buena calidad
+        pix = page.get_pixmap(matrix=mat, clip=clip)
+        foto_bytes = pix.tobytes("png")
+
     doc.close()
     return texto_completo, foto_bytes
 
