@@ -1,5 +1,3 @@
-sobre este codigo el cambio
-
 import streamlit as st
 import os
 import json
