@@ -105,7 +105,11 @@ def redactar_con_gemini(texto_cv):
     CV A PROCESAR:
     {texto_cv}
     """
-    response = client.models.generate_content(model=MODELO, contents=prompt, config={'response_mime_type': 'application/json'})
+    response = client.models.generate_content(
+        model=MODELO,
+        contents=prompt,
+        config={'response_mime_type': 'application/json'}
+    )
     return json.loads(response.text)
 
 def ajustar_fuente(shape, size=9):
@@ -114,7 +118,7 @@ def ajustar_fuente(shape, size=9):
             for run in p.runs:
                 run.font.size = Pt(size)
 
-def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_size=Pt(8), font_color=(0, 0, 0)):
+def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(11), body_size=Pt(9.5), font_color=(0, 0, 0)):
     for shape in slide.shapes:
         if not hasattr(shape, "text_frame"):
             continue
@@ -126,7 +130,6 @@ def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_
 
         tf = shape.text_frame
         tf.text = ""
-
         lines = [ln.rstrip() for ln in texto.splitlines() if ln.strip() != ""]
 
         for i, line in enumerate(lines):
@@ -151,6 +154,59 @@ def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(10), body_
         return True
     return False
 
+def llenar_experiencias(slide, placeholder, experiencias, font_color=(0, 0, 0)):
+    """Función especial para experiencias con separación visual entre cada una."""
+    for shape in slide.shapes:
+        if not hasattr(shape, "text_frame"):
+            continue
+        try:
+            if placeholder not in shape.text:
+                continue
+        except:
+            continue
+
+        tf = shape.text_frame
+        tf.text = ""
+
+        # Título de sección
+        p_titulo = tf.paragraphs[0]
+        p_titulo.text = "EXPERIENCIA LABORAL:"
+        if not p_titulo.runs: p_titulo.add_run()
+        for run in p_titulo.runs:
+            run.font.bold = True
+            run.font.size = Pt(11)
+            run.font.color.rgb = RGBColor(*font_color)
+
+        for exp in experiencias:
+            # Línea en blanco separadora
+            p_sep = tf.add_paragraph()
+            p_sep.text = ""
+
+            # Encabezado de experiencia: Empresa | Puesto (Periodo)
+            p_header = tf.add_paragraph()
+            header_text = f"• {exp.get('empresa','?')} | {exp.get('puesto','?')} ({exp.get('periodo','?')})"
+            p_header.text = header_text
+            if not p_header.runs: p_header.add_run()
+            for run in p_header.runs:
+                run.font.bold = True
+                run.font.size = Pt(10)
+                run.font.color.rgb = RGBColor(*font_color)
+
+            # Descripción línea por línea
+            descripcion = exp.get('descripcion', '')
+            for desc_line in descripcion.splitlines():
+                if desc_line.strip():
+                    p_desc = tf.add_paragraph()
+                    p_desc.text = f"  {desc_line.strip()}"
+                    if not p_desc.runs: p_desc.add_run()
+                    for run in p_desc.runs:
+                        run.font.bold = False
+                        run.font.size = Pt(9.5)
+                        run.font.color.rgb = RGBColor(*font_color)
+
+        return True
+    return False
+
 def eliminar_cuadro_foto(slide):
     shapes_to_delete = [s for s in slide.shapes if hasattr(s, "text") and "FOTO" in s.text]
     for shape in shapes_to_delete:
@@ -169,16 +225,17 @@ def agregar_foto(slide, foto_bytes):
 def actualizar_encabezado(slide, nombre, rol):
     for shape in slide.shapes:
         if hasattr(shape, "text"):
-            if any(x in shape.text for x in ["{{NOMBRE}}", "Colaborador propuesto", "NOMBRE"]):
+            if any(x in shape.text for x in ["{{NOMBRE}}", "COLABORADOR PROPUESTO", "Colaborador propuesto", "NOMBRE"]):
                 tf = shape.text_frame
                 tf.text = ""
+
                 p1 = tf.paragraphs[0]
                 p1.text = f"COLABORADOR PROPUESTO – {nombre}"
                 if not p1.runs: p1.add_run()
                 for run in p1.runs:
                     run.font.bold = True
                     run.font.size = Pt(13)
-                    run.font.color.rgb = RGBColor(88, 24, 139)  # Violeta oscuro
+                    run.font.color.rgb = RGBColor(88, 24, 139)
 
                 p2 = tf.add_paragraph()
                 p2.text = rol
@@ -204,32 +261,30 @@ def generar_pptx(datos, template_bytes, foto_bytes):
     # LADO IZQUIERDO (VIOLETA → TEXTO BLANCO)
     llenar_shape_con_titulos(s1, "{{PERFIL}}",
         f"PERFIL:\n{datos.get('perfil', '')}",
-        Pt(10), Pt(8), font_color=(255, 255, 255))
+        Pt(11), Pt(9.5), font_color=(255, 255, 255))
 
     habilidades_txt = f"HABILIDADES:\n{datos.get('habilidades_tecnicas', '')}"
-    if datos.get('herramientas'): habilidades_txt += f"\n\nHERRAMIENTAS:\n{datos.get('herramientas', '')}"
-    if datos.get('expertise'): habilidades_txt += f"\n\nEXPERTISE:\n{datos.get('expertise', '')}"
+    if datos.get('herramientas'):
+        habilidades_txt += f"\n\nHERRAMIENTAS:\n{datos.get('herramientas', '')}"
+    if datos.get('expertise'):
+        habilidades_txt += f"\n\nEXPERTISE:\n{datos.get('expertise', '')}"
     llenar_shape_con_titulos(s1, "{{HABILIDADES}}",
         habilidades_txt,
-        Pt(10), Pt(8), font_color=(255, 255, 255))
+        Pt(11), Pt(9.5), font_color=(255, 255, 255))
 
     educacion_txt = f"EDUCACIÓN:\n{datos.get('educacion', '')}"
-    if datos.get('certificaciones'): educacion_txt += f"\n\nCERTIFICACIONES:\n{datos.get('certificaciones', '')}"
+    if datos.get('certificaciones'):
+        educacion_txt += f"\n\nCERTIFICACIONES:\n{datos.get('certificaciones', '')}"
     llenar_shape_con_titulos(s1, "{{EDUCACION}}",
         educacion_txt,
-        Pt(10), Pt(8), font_color=(255, 255, 255))
+        Pt(11), Pt(9.5), font_color=(255, 255, 255))
 
     llenar_shape_con_titulos(s1, "{{IDIOMAS}}",
         f"IDIOMAS:\n{datos.get('idiomas', '')}",
-        Pt(10), Pt(8), font_color=(255, 255, 255))
+        Pt(11), Pt(9.5), font_color=(255, 255, 255))
 
-    # LADO DERECHO (BLANCO → TEXTO NEGRO)
-    txt_exp12 = "EXPERIENCIA LABORAL:\n\n"
-    for exp in exps[:2]:
-        txt_exp12 += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n{exp['descripcion']}\n\n"
-    llenar_shape_con_titulos(s1, "{{EXPERIENCIA_1_2}}",
-        txt_exp12,
-        Pt(10), Pt(8), font_color=(0, 0, 0))
+    # LADO DERECHO (BLANCO → TEXTO NEGRO) — 2 primeras experiencias
+    llenar_experiencias(s1, "{{EXPERIENCIA_1_2}}", exps[:2], font_color=(0, 0, 0))
 
     agregar_foto(s1, foto_bytes)
 
@@ -242,16 +297,11 @@ def generar_pptx(datos, template_bytes, foto_bytes):
         slide = prs.slides[i]
         actualizar_encabezado(slide, nombre, rol)
 
-        txt = "EXPERIENCIA LABORAL (Cont.):\n\n"
-        for exp in remaining_exps[:4]:
-            txt += f"• {exp['empresa']} | {exp['puesto']} ({exp['periodo']})\n{exp['descripcion']}\n\n"
-
-        llenar_shape_con_titulos(slide, "{{EXPERIENCIA_3_PLUS}}",
-            txt,
-            Pt(10), Pt(8), font_color=(0, 0, 0))
+        if remaining_exps:
+            llenar_experiencias(slide, "{{EXPERIENCIA_3_PLUS}}", remaining_exps[:4], font_color=(0, 0, 0))
+            remaining_exps = remaining_exps[4:]
 
         agregar_foto(slide, foto_bytes)
-        remaining_exps = remaining_exps[4:]
 
     out = BytesIO()
     prs.save(out)
