@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import json
-import re
+import time
 import fitz  # PyMuPDF
 from google import genai
 from pptx import Presentation
@@ -65,29 +65,11 @@ def reset_app():
     st.session_state.reset_key += 1
 
 # ==========================================
-# CONFIGURACIÓN DE GEMINI
+# CONFIGURACIÓN DE GEMINI (CON ROBUSTEZ)
 # ==========================================
 API_KEY = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=API_KEY)
-MODELO = "gemini-2.0-flash"
-
-# ==========================================
-# FUNCIONES DE PROCESAMIENTO
-# ==========================================
-def extraer_foto_y_texto(pdf_bytes):
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    texto_completo = ""
-    foto_bytes = None
-    for page in doc:
-        texto_completo += page.get_text()
-        if not foto_bytes:
-            images = page.get_images(full=True)
-            if images:
-                xref = images[0][0]
-                base_image = doc.extract_image(xref)
-                foto_bytes = base_image["image"]
-    doc.close()
-    return texto_completo, foto_bytes
+MODELO = "gemini-1.5-flash" # Más estable para límites de cuota
 
 def redactar_con_gemini(texto_cv):
     prompt = f"""
@@ -105,27 +87,48 @@ def redactar_con_gemini(texto_cv):
     CV A PROCESAR:
     {texto_cv}
     """
-    response = client.models.generate_content(
-        model=MODELO,
-        contents=prompt,
-        config={'response_mime_type': 'application/json'}
-    )
-    return json.loads(response.text)
+    
+    for intento in range(3):
+        try:
+            response = client.models.generate_content(
+                model=MODELO,
+                contents=prompt,
+                config={'response_mime_type': 'application/json'}
+            )
+            resultado = json.loads(response.text)
+            
+            # CORRECCIÓN: Si devuelve una lista, tomar el primer objeto
+            if isinstance(resultado, list):
+                resultado = resultado[0] if resultado else {}
+                
+            return resultado
+        except Exception as e:
+            if "429" in str(e) and intento < 2:
+                time.sleep(5) # Espera 5 segundos si la cuota se agotó
+                continue
+            raise e
 
-def ajustar_fuente(shape, size=9):
-    if hasattr(shape, "text_frame"):
-        for p in shape.text_frame.paragraphs:
-            for run in p.runs:
-                run.font.size = Pt(size)
+# ==========================================
+# FUNCIONES DE PROCESAMIENTO PPTX
+# ==========================================
+def extraer_foto_y_texto(pdf_bytes):
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    texto_completo = ""
+    foto_bytes = None
+    for page in doc:
+        texto_completo += page.get_text()
+        if not foto_bytes:
+            images = page.get_images(full=True)
+            if images:
+                xref = images[0][0]
+                base_image = doc.extract_image(xref)
+                foto_bytes = base_image["image"]
+    doc.close()
+    return texto_completo, foto_bytes
 
 def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(11), body_size=Pt(9.5), font_color=(0, 0, 0)):
     for shape in slide.shapes:
-        if not hasattr(shape, "text_frame"):
-            continue
-        try:
-            if placeholder not in shape.text:
-                continue
-        except:
+        if not hasattr(shape, "text_frame") or placeholder not in (shape.text or ""):
             continue
 
         tf = shape.text_frame
@@ -135,75 +138,50 @@ def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(11), body_
         for i, line in enumerate(lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = line
-
             stripped = line.strip()
-            is_title = (
-                stripped.endswith(':') or
-                (stripped.isupper() and len(stripped) > 2) or
-                stripped.startswith('•')
-            )
+            is_title = stripped.endswith(':') or (stripped.isupper() and len(stripped) > 2) or stripped.startswith('•')
 
-            if not p.runs:
-                p.add_run()
-
+            if not p.runs: p.add_run()
             for run in p.runs:
                 run.font.bold = is_title
                 run.font.size = title_size if is_title else body_size
                 run.font.color.rgb = RGBColor(*font_color)
-
         return True
     return False
 
 def llenar_experiencias(slide, placeholder, experiencias, font_color=(0, 0, 0)):
-    """Función especial para experiencias con separación visual entre cada una."""
     for shape in slide.shapes:
-        if not hasattr(shape, "text_frame"):
-            continue
-        try:
-            if placeholder not in shape.text:
-                continue
-        except:
+        if not hasattr(shape, "text_frame") or placeholder not in (shape.text or ""):
             continue
 
         tf = shape.text_frame
         tf.text = ""
-
-        # Título de sección
+        
         p_titulo = tf.paragraphs[0]
         p_titulo.text = "EXPERIENCIA LABORAL:"
-        if not p_titulo.runs: p_titulo.add_run()
         for run in p_titulo.runs:
             run.font.bold = True
             run.font.size = Pt(11)
             run.font.color.rgb = RGBColor(*font_color)
 
         for exp in experiencias:
-            # Línea en blanco separadora
-            p_sep = tf.add_paragraph()
-            p_sep.text = ""
-
-            # Encabezado de experiencia: Empresa | Puesto (Periodo)
-            p_header = tf.add_paragraph()
-            header_text = f"• {exp.get('empresa','?')} | {exp.get('puesto','?')} ({exp.get('periodo','?')})"
-            p_header.text = header_text
-            if not p_header.runs: p_header.add_run()
-            for run in p_header.runs:
+            tf.add_paragraph().text = "" # Espacio separador
+            
+            p_h = tf.add_paragraph()
+            p_h.text = f"• {exp.get('empresa','?')} | {exp.get('puesto','?')} ({exp.get('periodo','?')})"
+            for run in p_h.runs:
                 run.font.bold = True
                 run.font.size = Pt(10)
                 run.font.color.rgb = RGBColor(*font_color)
 
-            # Descripción línea por línea
-            descripcion = exp.get('descripcion', '')
-            for desc_line in descripcion.splitlines():
-                if desc_line.strip():
-                    p_desc = tf.add_paragraph()
-                    p_desc.text = f"  {desc_line.strip()}"
-                    if not p_desc.runs: p_desc.add_run()
-                    for run in p_desc.runs:
-                        run.font.bold = False
+            desc = exp.get('descripcion', '')
+            for d_line in desc.splitlines():
+                if d_line.strip():
+                    p_d = tf.add_paragraph()
+                    p_d.text = f"  {d_line.strip()}"
+                    for run in p_d.runs:
                         run.font.size = Pt(9.5)
                         run.font.color.rgb = RGBColor(*font_color)
-
         return True
     return False
 
@@ -224,169 +202,80 @@ def agregar_foto(slide, foto_bytes):
 
 def actualizar_encabezado(slide, nombre, rol):
     for shape in slide.shapes:
-        if hasattr(shape, "text"):
-            if any(x in shape.text for x in ["{{NOMBRE}}", "COLABORADOR PROPUESTO", "Colaborador propuesto", "NOMBRE"]):
-                tf = shape.text_frame
-                tf.text = ""
-
-                p1 = tf.paragraphs[0]
-                p1.text = f"COLABORADOR PROPUESTO – {nombre}"
-                if not p1.runs: p1.add_run()
-                for run in p1.runs:
-                    run.font.bold = True
-                    run.font.size = Pt(13)
-                    run.font.color.rgb = RGBColor(88, 24, 139)
-
-                p2 = tf.add_paragraph()
-                p2.text = rol
-                if not p2.runs: p2.add_run()
-                for run in p2.runs:
-                    run.font.bold = False
-                    run.font.size = Pt(11)
-                    run.font.color.rgb = RGBColor(88, 24, 139)
-                return
+        if hasattr(shape, "text") and any(x in shape.text for x in ["{{NOMBRE}}", "COLABORADOR PROPUESTO"]):
+            tf = shape.text_frame
+            tf.text = ""
+            p1 = tf.paragraphs[0]
+            p1.text = f"COLABORADOR PROPUESTO – {nombre}"
+            for run in p1.runs:
+                run.font.bold = True
+                run.font.size = Pt(13)
+                run.font.color.rgb = RGBColor(88, 24, 139)
+            p2 = tf.add_paragraph()
+            p2.text = rol
+            for run in p2.runs:
+                run.font.size = Pt(11)
+                run.font.color.rgb = RGBColor(88, 24, 139)
+            return
 
 def generar_pptx(datos, template_bytes, foto_bytes):
+    # Validación extra de formato de datos
+    if isinstance(datos, list):
+        datos = datos[0] if datos else {}
+
     prs = Presentation(BytesIO(template_bytes))
     nombre = datos.get('nombre', 'N/A')
     rol = datos.get('rol', '')
     exps = datos.get('experiencias', [])
 
-    # ========================
-    # SLIDE 1
-    # ========================
+    # Slide 1
     s1 = prs.slides[0]
     actualizar_encabezado(s1, nombre, rol)
-
-    # LADO IZQUIERDO (VIOLETA → TEXTO BLANCO)
-    llenar_shape_con_titulos(s1, "{{PERFIL}}",
-        f"PERFIL:\n{datos.get('perfil', '')}",
-        Pt(11), Pt(9.5), font_color=(255, 255, 255))
-
-    habilidades_txt = f"HABILIDADES:\n{datos.get('habilidades_tecnicas', '')}"
-    if datos.get('herramientas'):
-        habilidades_txt += f"\n\nHERRAMIENTAS:\n{datos.get('herramientas', '')}"
-    if datos.get('expertise'):
-        habilidades_txt += f"\n\nEXPERTISE:\n{datos.get('expertise', '')}"
-    llenar_shape_con_titulos(s1, "{{HABILIDADES}}",
-        habilidades_txt,
-        Pt(11), Pt(9.5), font_color=(255, 255, 255))
-
-    educacion_txt = f"EDUCACIÓN:\n{datos.get('educacion', '')}"
-    if datos.get('certificaciones'):
-        educacion_txt += f"\n\nCERTIFICACIONES:\n{datos.get('certificaciones', '')}"
-    llenar_shape_con_titulos(s1, "{{EDUCACION}}",
-        educacion_txt,
-        Pt(11), Pt(9.5), font_color=(255, 255, 255))
-
-    llenar_shape_con_titulos(s1, "{{IDIOMAS}}",
-        f"IDIOMAS:\n{datos.get('idiomas', '')}",
-        Pt(11), Pt(9.5), font_color=(255, 255, 255))
-
-    # LADO DERECHO (BLANCO → TEXTO NEGRO) — 2 primeras experiencias
-    llenar_experiencias(s1, "{{EXPERIENCIA_1_2}}", exps[:2], font_color=(0, 0, 0))
-
+    llenar_shape_con_titulos(s1, "{{PERFIL}}", f"PERFIL:\n{datos.get('perfil','')}", Pt(11), Pt(9.5), (255,255,255))
+    hab = f"HABILIDADES:\n{datos.get('habilidades_tecnicas','')}\n\nHERRAMIENTAS:\n{datos.get('herramientas','')}"
+    llenar_shape_con_titulos(s1, "{{HABILIDADES}}", hab, Pt(11), Pt(9.5), (255,255,255))
+    edu = f"EDUCACIÓN:\n{datos.get('educacion','')}\n\nIDIOMAS:\n{datos.get('idiomas','')}"
+    llenar_shape_con_titulos(s1, "{{EDUCACION}}", edu, Pt(11), Pt(9.5), (255,255,255))
+    llenar_experiencias(s1, "{{EXPERIENCIA_1_2}}", exps[:2], (0,0,0))
     agregar_foto(s1, foto_bytes)
 
-    # ========================
-    # SLIDES 2 Y 3
-    # ========================
-    remaining_exps = exps[2:]
-
+    # Slides siguientes
+    rem = exps[2:]
     for i in range(1, len(prs.slides)):
         slide = prs.slides[i]
         actualizar_encabezado(slide, nombre, rol)
-
-        if remaining_exps:
-            llenar_experiencias(slide, "{{EXPERIENCIA_3_PLUS}}", remaining_exps[:4], font_color=(0, 0, 0))
-            remaining_exps = remaining_exps[4:]
-
+        if rem:
+            llenar_experiencias(slide, "{{EXPERIENCIA_3_PLUS}}", rem[:4], (0,0,0))
+            rem = rem[4:]
         agregar_foto(slide, foto_bytes)
 
-    out = BytesIO()
-    prs.save(out)
-    out.seek(0)
+    out = BytesIO(); prs.save(out); out.seek(0)
     return out, nombre, len(exps)
 
 # ==========================================
 # INTERFAZ DE STREAMLIT
 # ==========================================
-st.markdown('<div class="main-header"><h1>🎨 TRANSFORMADOR HORIZON CV</h1><p>Convierte CVs al formato Horizon automáticamente</p></div>', unsafe_allow_html=True)
-
-with st.expander("ℹ️ Instrucciones de uso"):
-    st.markdown("1. Sube el CV del candidato (.pdf)\n2. Haz clic en 'Transformar'\n3. Descarga el resultado.")
-
-st.markdown("---")
-
-# PASO 1: Template
-col_main, col_btn = st.columns([8, 1])
-with col_main: st.markdown("### 📁 Paso 1: Template Horizon")
-with col_btn: st.button("🧹", on_click=reset_app, key="btn_limpiar")
+st.markdown('<div class="main-header"><h1>🎨 TRANSFORMADOR HORIZON CV</h1></div>', unsafe_allow_html=True)
 
 DEFAULT_TEMPLATE = "CV HORIZON-MODELO 2.pptx"
 template_bytes = None
-template_file = st.file_uploader("Sube un nuevo .pptx si quieres cambiar el modelo", type=['pptx'], key=f"t_{st.session_state.reset_key}")
+t_file = st.file_uploader("Template (.pptx)", type=['pptx'], key=f"t_{st.session_state.reset_key}")
 
-if template_file:
-    template_bytes = template_file.read()
-    st.success(f"✓ Usando template subido: {template_file.name}")
+if t_file:
+    template_bytes = t_file.read()
 elif os.path.exists(DEFAULT_TEMPLATE):
     with open(DEFAULT_TEMPLATE, "rb") as f: template_bytes = f.read()
-    st.info(f"ℹ️ Usando modelo estándar: {DEFAULT_TEMPLATE}")
-else:
-    st.warning("⚠️ Sube un template .pptx para comenzar.")
 
-st.markdown("---")
+cv_file = st.file_uploader("CV (.pdf)", type=['pdf'], key=f"cv_{st.session_state.reset_key}")
 
-# PASO 2: CV
-st.markdown("### 📄 Paso 2: Subir CV del Candidato")
-cv_file = st.file_uploader("Selecciona el archivo .pdf del CV", type=['pdf'], key=f"cv_{st.session_state.reset_key}")
-
-if cv_file:
-    st.success(f"✓ CV cargado: {cv_file.name}")
-
-st.markdown("---")
-
-# BOTÓN DE PROCESAMIENTO
 if template_bytes and cv_file:
-    if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
+    if st.button("🚀 TRANSFORMAR"):
         with st.spinner("⏳ Procesando..."):
             try:
-                cv_bytes = cv_file.read()
-
-                st.info("✓ Extrayendo información del PDF...")
-                texto, foto_bytes = extraer_foto_y_texto(cv_bytes)
-
-                st.info("✓ Analizando con Gemini...")
-                datos_json = redactar_con_gemini(texto)
-
-                st.info("✓ Generando presentación Horizon...")
-                output_pptx, nombre, num_exp = generar_pptx(datos_json, template_bytes, foto_bytes)
-
-                st.markdown(f"""
-                <div class="success-box">
-                    <h3 style='color: #155724; margin: 0;'>✅ ¡TRANSFORMACIÓN COMPLETADA!</h3>
-                    <p style='margin: 10px 0;'><strong>Candidato:</strong> {nombre}</p>
-                    <p style='margin: 10px 0;'><strong>Experiencias detectadas:</strong> {num_exp}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-                st.download_button(
-                    label="📥 DESCARGAR CV HORIZON",
-                    data=output_pptx,
-                    file_name=f"CV_Horizon_{nombre.replace(' ', '_')}.pptx",
-                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                )
-
+                texto, foto = extraer_foto_y_texto(cv_file.read())
+                datos = redactar_con_gemini(texto)
+                out, nom, n_exp = generar_pptx(datos, template_bytes, foto)
+                st.success(f"✅ ¡Completado! Candidato: {nom}")
+                st.download_button("📥 DESCARGAR", out, f"CV_Horizon_{nom}.pptx")
             except Exception as e:
-                st.error(f"❌ Error durante el procesamiento: {str(e)}")
-                st.exception(e)
-else:
-    st.info("👆 Por favor sube el CV para continuar")
-
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 1rem;'>
-    <p>Desarrollado por Horizon Consulting | Powered by Gemini 2.0 Flash</p>
-</div>
-""", unsafe_allow_html=True)
+                st.error(f"❌ Error: {str(e)}")
