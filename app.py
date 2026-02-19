@@ -20,9 +20,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# ==========================================
-# ESTILOS CSS
-# ==========================================
 st.markdown("""
 <style>
     .main-header {
@@ -56,9 +53,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# LÓGICA DE RESET (session_state)
-# ==========================================
 if "reset_key" not in st.session_state:
     st.session_state.reset_key = 0
 
@@ -90,7 +84,6 @@ def extraer_foto_y_texto(pdf_bytes):
     doc.close()
     return texto_completo, foto_bytes
 
-# ✅ CAMBIO 1: Reintentos ante error 429 + corrección si Gemini devuelve lista
 def redactar_con_gemini(texto_cv):
     prompt = f"""
     Eres un transcriptor de datos de alta fidelidad para Horizon Consulting. 
@@ -115,7 +108,6 @@ def redactar_con_gemini(texto_cv):
                 config={'response_mime_type': 'application/json'}
             )
             resultado = json.loads(response.text)
-            # Corrección: si Gemini devuelve lista en vez de dict
             if isinstance(resultado, list):
                 resultado = resultado[0] if resultado else {}
             return resultado
@@ -154,7 +146,8 @@ def llenar_shape_con_titulos(slide, placeholder, texto, title_size=Pt(11), body_
         return True
     return False
 
-def llenar_experiencias(slide, placeholder, experiencias, font_color=(0, 0, 0)):
+# ✅ CAMBIO: llenar_experiencias ahora acepta un título opcional
+def llenar_experiencias(slide, placeholder, experiencias, font_color=(0, 0, 0), titulo="EXPERIENCIA LABORAL:"):
     for shape in slide.shapes:
         if not hasattr(shape, "text_frame"): continue
         try:
@@ -163,14 +156,14 @@ def llenar_experiencias(slide, placeholder, experiencias, font_color=(0, 0, 0)):
         tf = shape.text_frame
         tf.text = ""
         p_titulo = tf.paragraphs[0]
-        p_titulo.text = "EXPERIENCIA LABORAL:"
+        p_titulo.text = titulo
         if not p_titulo.runs: p_titulo.add_run()
         for run in p_titulo.runs:
             run.font.bold = True
             run.font.size = Pt(11)
             run.font.color.rgb = RGBColor(*font_color)
         for exp in experiencias:
-            tf.add_paragraph().text = ""  # Espacio separador
+            tf.add_paragraph().text = ""
             p_h = tf.add_paragraph()
             p_h.text = f"• {exp.get('empresa','?')} | {exp.get('puesto','?')} ({exp.get('periodo','?')})"
             if not p_h.runs: p_h.add_run()
@@ -226,9 +219,7 @@ def actualizar_encabezado(slide, nombre, rol):
                     run.font.color.rgb = RGBColor(88, 24, 139)
                 return
 
-# ✅ CAMBIO 2: Validación de formato al inicio de generar_pptx
 def generar_pptx(datos, template_bytes, foto_bytes):
-    # Corrección: si Gemini devuelve lista en vez de dict
     if isinstance(datos, list):
         datos = datos[0] if datos else {}
 
@@ -237,34 +228,55 @@ def generar_pptx(datos, template_bytes, foto_bytes):
     rol = datos.get('rol', '')
     exps = datos.get('experiencias', [])
 
-    # Slide 1
+    # ── SLIDE 1 ──────────────────────────────────────────────
     s1 = prs.slides[0]
     actualizar_encabezado(s1, nombre, rol)
+
+    # Placeholder {{PUESTO}} → rol
+    llenar_shape_con_titulos(s1, "{{PUESTO}}", rol, Pt(11), Pt(10), font_color=(88, 24, 139))
+
+    # Perfil (texto blanco, lado izquierdo)
     llenar_shape_con_titulos(s1, "{{PERFIL}}",
         f"PERFIL:\n{datos.get('perfil', '')}",
         Pt(11), Pt(9.5), font_color=(255, 255, 255))
+
+    # ✅ CAMBIO CLAVE: Educación usa el placeholder real con tilde {{EDUCACIÓN}}
+    edu = f"EDUCACIÓN:\n{datos.get('educacion', '')}"
+    if datos.get('certificaciones'): edu += f"\n\nCERTIFICACIONES:\n{datos.get('certificaciones', '')}"
+    llenar_shape_con_titulos(s1, "{{EDUCACIÓN}}",
+        edu, Pt(11), Pt(9.5), font_color=(255, 255, 255))
+
+    # Habilidades
     hab = f"HABILIDADES:\n{datos.get('habilidades_tecnicas', '')}"
     if datos.get('herramientas'): hab += f"\n\nHERRAMIENTAS:\n{datos.get('herramientas', '')}"
     if datos.get('expertise'): hab += f"\n\nEXPERTISE:\n{datos.get('expertise', '')}"
     llenar_shape_con_titulos(s1, "{{HABILIDADES}}",
         hab, Pt(11), Pt(9.5), font_color=(255, 255, 255))
-    edu = f"EDUCACIÓN:\n{datos.get('educacion', '')}"
-    if datos.get('certificaciones'): edu += f"\n\nCERTIFICACIONES:\n{datos.get('certificaciones', '')}"
-    llenar_shape_con_titulos(s1, "{{EDUCACION}}",
-        edu, Pt(11), Pt(9.5), font_color=(255, 255, 255))
+
+    # Idiomas
     llenar_shape_con_titulos(s1, "{{IDIOMAS}}",
         f"IDIOMAS:\n{datos.get('idiomas', '')}",
         Pt(11), Pt(9.5), font_color=(255, 255, 255))
-    llenar_experiencias(s1, "{{EXPERIENCIA_1_2}}", exps[:2], font_color=(0, 0, 0))
+
+    # ✅ CAMBIO CLAVE: Experiencias 1 y 2 en slide 1 (placeholder {{EXPERIENCIA_1_2}} si existe,
+    # si no, busca el área de texto principal de experiencia)
+    if not llenar_experiencias(s1, "{{EXPERIENCIA_1_2}}", exps[:2], font_color=(0, 0, 0)):
+        # Fallback: intenta con el placeholder de resto por si el template lo usa igual
+        llenar_experiencias(s1, "{{EXPERIENCIA_RESTO}}", exps[:2], font_color=(0, 0, 0))
+
     agregar_foto(s1, foto_bytes)
 
-    # Slides 2 y 3
+    # ── SLIDES 2, 3, ... ─────────────────────────────────────
+    # ✅ CAMBIO CLAVE: Usa {{EXPERIENCIA_RESTO}} que es el placeholder real del template
     rem = exps[2:]
     for i in range(1, len(prs.slides)):
         slide = prs.slides[i]
         actualizar_encabezado(slide, nombre, rol)
+        llenar_shape_con_titulos(slide, "{{PUESTO}}", rol, Pt(11), Pt(10), font_color=(88, 24, 139))
         if rem:
-            llenar_experiencias(slide, "{{EXPERIENCIA_3_PLUS}}", rem[:4], font_color=(0, 0, 0))
+            llenar_experiencias(slide, "{{EXPERIENCIA_RESTO}}", rem[:4],
+                font_color=(0, 0, 0),
+                titulo="EXPERIENCIA LABORAL (Cont.):")
             rem = rem[4:]
         agregar_foto(slide, foto_bytes)
 
@@ -281,7 +293,6 @@ with st.expander("ℹ️ Instrucciones de uso"):
 
 st.markdown("---")
 
-# PASO 1: Template (Precargado)
 col_main, col_btn = st.columns([8, 1])
 with col_main: st.markdown("### 📁 Paso 1: Template Horizon")
 with col_btn: st.button("🧹", on_click=reset_app, key="btn_limpiar")
@@ -301,7 +312,6 @@ else:
 
 st.markdown("---")
 
-# PASO 2: CV
 st.markdown("### 📄 Paso 2: Subir CV del Candidato")
 cv_file = st.file_uploader("Selecciona el archivo .pdf del CV", type=['pdf'], key=f"cv_{st.session_state.reset_key}")
 
@@ -310,7 +320,6 @@ if cv_file:
 
 st.markdown("---")
 
-# BOTÓN DE PROCESAMIENTO
 if template_bytes and cv_file:
     if st.button("🚀 TRANSFORMAR A FORMATO HORIZON"):
         with st.spinner("⏳ Procesando..."):
