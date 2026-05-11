@@ -317,7 +317,7 @@ col_main, col_btn = st.columns([8, 1])
 with col_main: st.markdown("### 📁 Paso 1: Template Horizon")
 with col_btn: st.button("🧹", on_click=reset_app, key="btn_limpiar")
 
-DEFAULT_TEMPLATE = "CV HORIZON-MODELO 2.pptx"
+DEFAULT_TEMPLATE = "CV HORIZON-MODELO 3.pptx"
 template_bytes = None
 template_file = st.file_uploader("Sube un nuevo .pptx si quieres cambiar el modelo", type=['pptx'], key=f"t_{st.session_state.reset_key}")
 
