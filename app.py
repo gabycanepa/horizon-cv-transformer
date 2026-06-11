@@ -63,7 +63,7 @@ def reset_app():
 # ==========================================
 API_KEY = st.secrets["GEMINI_API_KEY"]
 client = genai.Client(api_key=API_KEY)
-MODELO = "gemini-2.0-flash"
+MODELO = "gemini-2.5-flash-lite"
 
 # ==========================================
 # HELPERS
